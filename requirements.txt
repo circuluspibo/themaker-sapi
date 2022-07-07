@@ -1,0 +1,17 @@
+Cython
+librosa
+fastapi
+uvicorn
+jamotools
+g2pk
+g2p_en
+sox
+#matplotlib==3.3.1
+numpy==1.21
+pydub
+phonemizer
+scipy
+#tensorboard==2.3.0
+#torch==1.6.0
+#torchvision==0.7.0
+Unidecode
