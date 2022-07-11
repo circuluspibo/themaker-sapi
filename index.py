@@ -95,13 +95,19 @@ device = "cuda:0"
 
 #from speechbrain.pretrained import EncoderDecoderASR
 from transformers import AutoProcessor, AutoModelForCTC
+from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 import torchaudio
 
 #asr_model = EncoderDecoderASR.from_hparams("speechbrain/asr-conformer-transformerlm-ksponspeech",run_opts={"device":device})
 
-processor = AutoProcessor.from_pretrained("cheulyop/wav2vec2-large-xlsr-ksponspeech_1-20")
-model = AutoModelForCTC.from_pretrained("cheulyop/wav2vec2-large-xlsr-ksponspeech_1-20")
-model = model.to(device)
+ko_processor = AutoProcessor.from_pretrained("cheulyop/wav2vec2-large-xlsr-ksponspeech_1-20")
+ko_model = AutoModelForCTC.from_pretrained("cheulyop/wav2vec2-large-xlsr-ksponspeech_1-20")
+ko_model = ko_model.to(device)
+ 
+ # load model and processor
+en_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h-lv60-self")
+en_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h-lv60-self")
+
 
 try:
     ENV = os.environ['CIRCULUS_ENV']
@@ -536,10 +542,10 @@ async def tts(text : str, hash="", voice = "main", lang = "ko", type="mp3"): #og
     return file
 
 @app.post("/stt")
-async def stt(file : UploadFile = File(...)):
+async def stt(file : UploadFile = File(...), lang = "ko"):
     start = time.time()  # 시작 시간 저장
-
     location = f"files/{file.filename}"
+
     with open(location,"wb+") as file_object:
         file_object.write(file.file.read())
     #if lang == "ko":
@@ -547,23 +553,34 @@ async def stt(file : UploadFile = File(...)):
     #    print("Transcript1:", time.time() - start)  # 현재시각 - 시작시간 = 실행 시간
     #    return { "result" : True, "data" : transcription}
     #elif lang == "ko2":
-        speech_array, sampling_rate = torchaudio.load(location)
-        speech_array.to(device)
+        if lang == "ko":
+            speech_array, sampling_rate = torchaudio.load(location)
+            speech_array.to(device)
 
-        feat = processor(speech_array[0], sampling_rate=16000, padding=True, max_length=800000, 
-          truncation=True, return_attention_mask=True, return_tensors="pt", pad_token_id=49)
+            feat =ko_processor(speech_array[0], sampling_rate=16000, padding=True, max_length=800000, 
+            truncation=True, return_attention_mask=True, return_tensors="pt", pad_token_id=49)
 
-        feat.to(device)
-        input = {'input_values': feat['input_values'],'attention_mask':feat['attention_mask']}
-        #input.to(device)
-        outputs = model(**input, output_attentions=True)
-        logits = outputs.logits
-        predicted_ids = logits.argmax(axis=-1)
-        transcription = processor.decode(predicted_ids[0])
-        print("Transcript2:", time.time() - start)  # 현재시각 - 시작시간 = 실행 시간
-        return { "result" : True, "data" : transcription}
-    #else:
-    #    return { "result" : False }
+            feat.to(device)
+            input = {'input_values': feat['input_values'],'attention_mask':feat['attention_mask']}
+            #input.to(device)
+            outputs = ko_model(**input, output_attentions=True)
+            logits = outputs.logits
+            predicted_ids = logits.argmax(axis=-1)
+            transcription = ko_processor.decode(predicted_ids[0])
+            print("Transcript 1:", time.time() - start)  # 현재시각 - 시작시간 = 실행 시간
+            return { "result" : True, "data" : transcription}
+        else:
+            speech_array, sampling_rate = torchaudio.load(location)
+            speech_array.to(device)
+            input_values = en_processor(speech_array[0], return_tensors="pt", padding="longest").input_values
+            
+            # retrieve logits
+            logits = en_model(input_values).logits
+            predicted_ids = torch.argmax(logits, dim=-1)
+            transcription = en_processor.batch_decode(predicted_ids)
+            print("Transcript 2:", time.time() - start)  # 현재시각 - 시작시간 = 실행 시간
+            return { "result" : True, "data" : transcription}
+
 
 if __name__ == "__main__":
     uvicorn.run("index:app",host=CONF["HOST"],port=CONF["PORT"])
